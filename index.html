@@ -1,0 +1,42 @@
+<!-- Reproductor Realizado por @edevisr
+Web: wwww.cabiguia.com
+Derechos de Uso: Edevis Raga 
+ -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="css/estilos.css">
+  <title>Player</title>
+</head>
+<body>
+  
+  <div class="live-player">
+      <!-- Contenido de tu reproductor de audio aquí -->
+  </div>
+
+  <div class="audio-player">
+    <audio id="audio" src="http://stream.zeno.fm/7pmtcmxhhg0uv"></audio>
+    <section class="controls">
+      <button id="playPauseBtn" aria-label="Reproducir/Pausar">
+        <span class="icon">&#9658;</span>
+      </button>
+      <button id="stopBtn" aria-label="Detener">
+        <span class="icon">&#9724;</span>
+      </button>
+      <label for="volumeRange" style="color:white;">Volumen:</label>
+      <input type="range" id="volumeRange" max="100" step="1" value="80">
+      <button id="backwardBtn" aria-label="Retroceder">
+        <span class="icon">&#9664;&#9664;</span>
+      </button>
+      <button id="forwardBtn" aria-label="Avanzar">
+        <span class="icon">&#9654;&#9654;</span>
+      </button>
+    </section>
+  </div> 
+
+  <script src="js/player.js"></script> 
+
+</body>
+</html>
