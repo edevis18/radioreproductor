@@ -1,52 +1,40 @@
-name: Taskmarket Live Claim Scan
+name: Taskmarket Live Open Task Rank
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  scan:
+  rank:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Find free no-stake claim tasks
+      - name: Rank all live open tasks
         shell: bash
         run: |
           set +e
           node <<'NODE'
           const API='https://api.taskmarket.dev';
-          async function get(url){
-            const r=await fetch(url,{headers:{accept:'application/json'}});
-            const txt=await r.text(); let data; try{data=JSON.parse(txt)}catch{data={raw:txt}};
-            return {status:r.status,data};
-          }
           (async()=>{
-            const urls=[
-              `${API}/api/tasks?status=open&mode=claim&limit=100&sort=reward_desc`,
-              `${API}/api/tasks?status=open&limit=100&sort=reward_desc`
-            ];
-            for(const url of urls){
-              const x=await get(url);
-              const rows=Array.isArray(x.data)?x.data:(x.data.tasks||x.data.items||[]);
-              console.log('QUERY='+url+' HTTP='+x.status+' COUNT='+rows.length);
-              const out=rows.filter(t=>(t.mode||t.taskMode)==='claim').map(t=>({
-                id:t.id||t.taskId,
-                reward:t.reward||t.taskReward||t.rewardAmount||t.rewardBaseUnits,
-                mode:t.mode||t.taskMode,
-                status:t.status||t.taskStatus,
-                title:t.title||null,
-                description:String(t.description||t.taskDescription||'').replace(/\s+/g,' ').slice(0,260),
-                expiry:t.expiryTime||t.expiresAt||t.deadline||null,
-                stakeRequired:t.stakeRequired??t.requiresStake??null,
-                stakeAmount:t.stakeAmount??t.claimStakeAmount??null,
-                claimedBy:t.claimedBy||t.selectedWorker||null,
-                submissionCount:t.submissionCount??null,
-                pendingActions:t.pendingActions||null
-              }));
-              console.log('CLAIM_TASKS='+JSON.stringify(out));
-            }
-          })().catch(e=>console.log('SCAN_SAFE_STOP='+e.message));
+            const r=await fetch(`${API}/api/tasks?status=open&limit=100&sort=reward_desc`,{headers:{accept:'application/json'}});
+            const d=await r.json(); const rows=Array.isArray(d)?d:(d.tasks||d.items||[]);
+            const out=rows.map(t=>({
+              id:t.id||t.taskId,
+              reward:t.reward||t.taskReward||t.rewardAmount||t.rewardBaseUnits,
+              mode:t.mode||t.taskMode,
+              status:t.status||t.taskStatus,
+              submissionCount:t.submissionCount??null,
+              pitchCount:t.pitchCount??null,
+              title:t.title||null,
+              description:String(t.description||t.taskDescription||'').replace(/\s+/g,' ').slice(0,900),
+              expiry:t.expiryTime||t.expiresAt||t.deadline||null,
+              stakeRequired:t.stakeRequired??t.requiresStake??null,
+              stakeAmount:t.stakeAmount??t.claimStakeAmount??null,
+              pendingActions:(t.pendingActions||[]).map(a=>({role:a.role,action:a.action,requiresPayment:a.requiresPayment,paymentAmount:a.paymentAmount,availableUntil:a.availableUntil}))
+            }));
+            console.log('OPEN_TASKS='+JSON.stringify(out));
+          })().catch(e=>console.log('RANK_SAFE_STOP='+e.message));
           NODE
           exit 0
