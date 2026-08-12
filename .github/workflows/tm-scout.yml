@@ -1,4 +1,4 @@
-name: Taskmarket Opportunity Scan
+name: Paintbot League Inspect
 
 on:
   push:
@@ -9,53 +9,17 @@ permissions:
   contents: read
 
 jobs:
-  scan:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Query active funded work
+      - name: Fetch public leaderboard and participation guide
         shell: bash
         run: |
-          node <<'NODE'
-          const fs = require('fs');
-          async function main(){
-            let cursor=null; const all=[];
-            for(let p=0;p<8;p++){
-              const u=new URL('https://api.taskmarket.dev/api/tasks');
-              u.searchParams.set('status','open');
-              u.searchParams.set('sort','newest');
-              u.searchParams.set('limit','100');
-              if(cursor) u.searchParams.set('cursor',cursor);
-              const r=await fetch(u,{headers:{accept:'application/json'}});
-              if(!r.ok) throw new Error(`HTTP ${r.status}`);
-              const j=await r.json(); all.push(...(j.tasks||[]));
-              if(!j.hasMore||!j.nextCursor) break; cursor=j.nextCursor;
-            }
-            const now=Date.now();
-            const active=all.filter(t=>
-              Number(t.reward||0)>=1000000 &&
-              t.submissionWindowOpen!==false &&
-              (!t.expiryTime || Date.parse(t.expiryTime)>now) &&
-              ['bounty','claim','benchmark'].includes(t.mode) &&
-              !t.claimedBy &&
-              !['completed','cancelled','expired'].includes(t.status)
-            ).sort((a,b)=>(a.submissionCount||0)-(b.submissionCount||0) || Number(b.reward||0)-Number(a.reward||0));
-            const rows=active.slice(0,30).map(t=>({
-              id:t.id, rewardUsdc:Number(t.reward)/1e6, netUsdc:Number(t.netReward||t.reward)/1e6,
-              mode:t.mode, submissions:t.submissionCount||0, expiryTime:t.expiryTime,
-              requester:t.requester, requesterActorType:t.requesterActorType,
-              tags:t.tags, description:t.description
-            }));
-            fs.writeFileSync('opportunities.json',JSON.stringify({scanned:all.length,active:rows},null,2));
-            console.log('SCANNED='+all.length);
-            console.log('ACTIVE_CANDIDATES='+JSON.stringify(rows));
-          }
-          main().catch(e=>{console.error(e);process.exit(1)});
-          NODE
-      - uses: actions/upload-artifact@v4
-        with:
-          name: taskmarket-opportunities
-          path: opportunities.json
-          retention-days: 1
+          set -euo pipefail
+          curl -fsSL 'https://softmax.com/api/observatory/v2/divisions/div_aa7825db-262f-4a62-b01a-177c1b48f7ee/leaderboard?include_recent_rounds=0' -o leaderboard.json
+          curl -fsSL 'https://softmax.com/api/observatory/v2/participate?league_id=league_b8fa9b35-ac22-48cf-a03f-07b397aff1c7' -o participate.txt
+          echo '=== LEADERBOARD ==='
+          cat leaderboard.json
+          echo
+          echo '=== PARTICIPATION ==='
+          cat participate.txt
