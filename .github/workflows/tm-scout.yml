@@ -1,4 +1,4 @@
-name: Taskmarket GoldenEye Submit
+name: Taskmarket Settlement Check
 on:
   push:
     branches: [tm-runner-20260811]
@@ -6,52 +6,12 @@ permissions:
   contents: read
   actions: read
 jobs:
-  submit:
+  check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Repair transport bytes and verify exact artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p0=Path('.tm-work/ge.part.00').read_text()
-          p2=Path('.tm-work/ge.part.02').read_text()
-          assert len(p0)==6012 and len(p2)==6000
-          assert p0[3013]=='j' and p0[3015:3027]=='iY2VudGVyIj4'
-          assert p2[4809]=='U'
-          p0=p0[:3013]+'n'+p0[3014:3015]+p0[3027:]
-          p2=p2[:4809]+'W'+p2[4810:]
-          Path('/tmp/ge.part.00').write_text(p0)
-          Path('/tmp/ge.part.02').write_text(p2)
-          PY
-          echo 'b1aea656a183893d07c513d755d7457cc867647c483dbc1fb30b82014ff42966  /tmp/ge.part.00' | sha256sum -c -
-          echo '1e6b62c9d26f846cf39ded5fec275a6d4b12a902c92ae71fec48a86188186054  .tm-work/ge.part.01' | sha256sum -c -
-          echo 'ddb776ae107ed6495cb2a9d18d5140ccd32d3f29ff73d9475d64c079d513634d  /tmp/ge.part.02' | sha256sum -c -
-          echo 'b340efdaa2c282c1ffaca1c3a0d55f4aff7ad39b39f44a0d6fb3142c0586a84b  .tm-work/ge.part.03' | sha256sum -c -
-          echo 'f80142342793f52f9d79dfcfd1574d70807e1c94cf6bc8bf994e11c19bdb4cb7  .tm-work/ge.part.04' | sha256sum -c -
-          echo 'e114f879ebf797b269f3d630feb260a735292932e614ac6a3bf3597bbe304bef  .tm-work/ge.part.05' | sha256sum -c -
-          echo '3b4f7464065231f72fe1568f9454ea0daffa991425b114c9bb2b289c149d52d6  .tm-work/ge.part.06' | sha256sum -c -
-          cat /tmp/ge.part.00 .tm-work/ge.part.01 /tmp/ge.part.02 .tm-work/ge.part.03 .tm-work/ge.part.04 .tm-work/ge.part.05 .tm-work/ge.part.06 > /tmp/goldeneye.b64
-          test "$(wc -c < /tmp/goldeneye.b64)" -eq 38548
-          echo 'da67455ebdafd13ec45ce2cd2ad9b32facb9aaf909588f77bee056864745723b  /tmp/goldeneye.b64' | sha256sum -c -
-          base64 -d /tmp/goldeneye.b64 > goldeneye-dam.html
-          test "$(wc -c < goldeneye-dam.html)" -eq 28909
-          echo 'c43b1707a3d8b4ac548be58b1731c5120a6150a7a5594a46b3dfc79e01776af2  goldeneye-dam.html' | sha256sum -c -
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('goldeneye-dam.html').read_text()
-          assert 'three@0.185.1' in s
-          assert 'COMBAT_CONFIG' in s and 'REFERENCE_METRICS' in s
-          assert 'guardCount:game.guards.length' in s
-          assert "game.guards.length===36" in s
-          assert "game.alarms.length===4" in s
-          print('ARTIFACT_VERIFICATION=PASS')
-          PY
       - name: Recover isolated worker key
         shell: bash
         env:
@@ -60,69 +20,40 @@ jobs:
           set -euo pipefail
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
             'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9128054472/zip' -o worker-key.zip
-          mkdir worker-key
-          unzip -q worker-key.zip -d worker-key
-          test -s worker-key/wallet-key.txt
+          mkdir worker-key && unzip -q worker-key.zip -d worker-key
           chmod 600 worker-key/wallet-key.txt
-      - name: Sign and submit without spend
+      - name: Read current submissions and task states
         shell: bash
         run: |
           set -euo pipefail
           npm install --no-save ethers@6 >/dev/null 2>&1
           node <<'NODE'
           const fs=require('fs');
-          const crypto=require('crypto');
-          const {Wallet,keccak256}=require('ethers');
+          const {Wallet}=require('ethers');
           const API='https://api.taskmarket.dev';
-          const taskId='0x2c85f49583e4f402fed28f19210de17ab8fcc4edd1cdff43d53560e358bce917';
-          const expectedWorker='0x073F1b940fB6bb86Fe8dc0f627cCF3a78471A0de';
           const wallet=new Wallet(fs.readFileSync('worker-key/wallet-key.txt','utf8').trim());
-          if(wallet.address.toLowerCase()!==expectedWorker.toLowerCase()) throw new Error('worker mismatch');
-          const bytes=fs.readFileSync('goldeneye-dam.html');
-          async function post(path,body,key){
-            const headers={'content-type':'application/json','accept':'application/json'};
-            if(key) headers['X-Taskmarket-Idempotency-Key']=key;
-            const r=await fetch(API+path,{method:'POST',headers,body:JSON.stringify(body),redirect:'error'});
-            const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text}};
-            return {ok:r.ok,status:r.status,data};
-          }
+          const audit='0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682';
+          const game='0x2c85f49583e4f402fed28f19210de17ab8fcc4edd1cdff43d53560e358bce917';
+          async function jget(path,headers={}){const r=await fetch(API+path,{headers:{accept:'application/json',...headers}}); const t=await r.text(); let d;try{d=JSON.parse(t)}catch{d={raw:t}};return{status:r.status,data:d}}
           async function main(){
-            const receipt={taskId,workerAddress:wallet.address,startedAt:new Date().toISOString(),stages:[]};
-            try{
-              const initialSig=await wallet.signMessage(`taskmarket:submit:${taskId}`);
-              const up=await post(`/api/tasks/${taskId}/submissions/request-upload-url`,{
-                taskId,workerAddress:wallet.address,signature:initialSig,
-                fileName:'goldeneye-dam.html',mimeType:'text/html',role:'attachment',sizeBytes:bytes.length
-              },crypto.randomUUID());
-              receipt.stages.push({stage:'request-upload',status:up.status,response:up.data});
-              if(!up.ok){if(up.status===402) throw new Error('PAYMENT_REQUIRED'); throw new Error(`upload-url ${up.status}: ${JSON.stringify(up.data)}`)}
-              const {uploadUrl,artifactKey}=up.data;
-              if(!uploadUrl||!artifactKey) throw new Error('missing uploadUrl/artifactKey');
-              const put=await fetch(uploadUrl,{method:'PUT',headers:{'content-type':'text/html','content-length':String(bytes.length)},body:bytes,redirect:'error'});
-              const putText=await put.text();
-              receipt.stages.push({stage:'upload',status:put.status,response:putText.slice(0,200)});
-              if(!put.ok) throw new Error(`upload ${put.status}`);
-              const artifact={artifactKey,fileName:'goldeneye-dam.html',mimeType:'text/html',role:'attachment',sizeBytes:bytes.length,sha256Hash:crypto.createHash('sha256').update(bytes).digest('hex'),keccak256Hash:keccak256(bytes)};
-              const finalSig=await wallet.signMessage(`taskmarket:submit:${taskId}:${artifactKey}`);
-              const submit=await post(`/api/tasks/${taskId}/submissions/from-keys`,{taskId,workerAddress:wallet.address,artifacts:[artifact],signature:finalSig},crypto.randomUUID());
-              receipt.stages.push({stage:'submit',status:submit.status,response:submit.data});
-              if(!submit.ok){if(submit.status===402) throw new Error('PAYMENT_REQUIRED'); throw new Error(`submit ${submit.status}: ${JSON.stringify(submit.data)}`)}
-              receipt.submission=submit.data; receipt.completedAt=new Date().toISOString();
-              fs.writeFileSync('goldeneye-submit-receipt.json',JSON.stringify(receipt,null,2));
-              console.log('SUBMISSION_RESPONSE='+JSON.stringify(submit.data));
-            }catch(e){
-              receipt.error=String(e&&e.message||e); receipt.failedAt=new Date().toISOString();
-              fs.writeFileSync('goldeneye-submit-receipt.json',JSON.stringify(receipt,null,2));
-              console.error('SAFE_STOP='+receipt.error); process.exit(2);
-            }
+            const sig=await wallet.signMessage(`taskmarket:read:${wallet.address.toLowerCase()}`);
+            const auth={'X-Taskmarket-Caller-Address':wallet.address,'X-Taskmarket-Caller-Signature':sig};
+            const mine=await jget(`/api/submissions/mine?workerAddress=${wallet.address}`,auth);
+            const a=await jget(`/api/tasks/${audit}`); const g=await jget(`/api/tasks/${game}`);
+            const rows=(mine.data.submissions||mine.data||[]);
+            const relevant=Array.isArray(rows)?rows.filter(x=>[audit,game].includes(x.taskId||x.task?.id)):rows;
+            console.log('WORKER='+wallet.address);
+            console.log('SUBMISSIONS='+JSON.stringify(relevant));
+            function slim(x){const t=x.data||{};return {status:x.status,taskStatus:t.status,submissionCount:t.submissionCount,selectedWorker:t.selectedWorker,winningSubmissionId:t.winningSubmissionId,payouts:t.payouts,completedAt:t.completedAt,expiryTime:t.expiryTime,pendingActions:t.pendingActions}}
+            console.log('AUDIT_TASK='+JSON.stringify(slim(a)));
+            console.log('GAME_TASK='+JSON.stringify(slim(g)));
           }
-          main();
+          main().catch(e=>{console.error(e);process.exit(1)});
           NODE
-      - name: Save safe receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: goldeneye-submit-receipt
-          path: goldeneye-submit-receipt.json
-          retention-days: 1
-          if-no-files-found: warn
+      - name: Inspect first-party payout endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g @lucid-agents/taskmarket@latest >/dev/null 2>&1
+          ROOT="$(npm root -g)/@lucid-agents/taskmarket"
+          grep -RniE "wallet balance|withdraw-usdc|withdrawal-address|usdc-balance|wallet/balance|withdrawFor" "$ROOT/dist" --include='*.js' | head -n 80 || true
