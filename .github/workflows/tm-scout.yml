@@ -30,31 +30,56 @@ jobs:
           fs.writeFileSync('wallet-address.txt', w.address + '\n');
           console.log('WORKER_ADDRESS=' + w.address);
           NODE
-      - name: Fetch open Taskmarket work
+      - name: Fetch full open Taskmarket inventory
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 --retry-delay 1 'https://api.taskmarket.dev/api/tasks?status=open&mode=bounty&sort=newest&limit=100' -o tasks.json
           node <<'NODE'
           const fs = require('fs');
-          const raw = JSON.parse(fs.readFileSync('tasks.json','utf8'));
-          const tasks = raw.tasks || [];
-          const picked = tasks
-            .filter(t => Number(t.reward || 0) >= 1000000)
-            .sort((a,b) => (a.submissionCount||0)-(b.submissionCount||0) || Number(b.reward||0)-Number(a.reward||0))
-            .slice(0,30)
-            .map(t => ({
-              id:t.id,
-              rewardUsdc:Number(t.reward)/1e6,
-              submissions:t.submissionCount,
-              expiryTime:t.expiryTime,
-              requester:t.requester,
-              requesterActorType:t.requesterActorType,
-              tags:t.tags,
-              description:t.description
-            }));
-          console.log('TASK_CANDIDATES_JSON=' + JSON.stringify(picked));
-          fs.writeFileSync('candidates.json', JSON.stringify(picked,null,2));
+          async function main() {
+            let cursor = null;
+            const all = [];
+            for (let i = 0; i < 6; i++) {
+              const u = new URL('https://api.taskmarket.dev/api/tasks');
+              u.searchParams.set('status','open');
+              u.searchParams.set('sort','newest');
+              u.searchParams.set('limit','100');
+              if (cursor) u.searchParams.set('cursor', cursor);
+              const r = await fetch(u, { headers: { 'accept':'application/json' } });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const j = await r.json();
+              all.push(...(j.tasks || []));
+              if (!j.hasMore || !j.nextCursor) break;
+              cursor = j.nextCursor;
+            }
+            fs.writeFileSync('tasks-all.json', JSON.stringify(all,null,2));
+            const picked = all
+              .filter(t => Number(t.reward || 0) >= 1000000)
+              .filter(t => ['bounty','claim'].includes(t.mode))
+              .sort((a,b) => {
+                const am = a.mode === 'claim' ? -1 : 0;
+                const bm = b.mode === 'claim' ? -1 : 0;
+                if (am !== bm) return am-bm;
+                return (a.submissionCount||0)-(b.submissionCount||0) || Number(b.reward||0)-Number(a.reward||0);
+              })
+              .slice(0,60)
+              .map(t => ({
+                id:t.id,
+                mode:t.mode,
+                rewardUsdc:Number(t.reward)/1e6,
+                submissions:t.submissionCount,
+                claimedBy:t.claimedBy,
+                expiryTime:t.expiryTime,
+                requester:t.requester,
+                requesterActorType:t.requesterActorType,
+                tags:t.tags,
+                description:t.description
+              }));
+            console.log('OPEN_COUNT=' + all.length);
+            console.log('TASK_CANDIDATES_JSON=' + JSON.stringify(picked));
+            fs.writeFileSync('candidates.json', JSON.stringify(picked,null,2));
+          }
+          main().catch(e => { console.error(e); process.exit(1); });
           NODE
       - name: Save private runner artifacts
         uses: actions/upload-artifact@v4
@@ -63,7 +88,7 @@ jobs:
           path: |
             wallet-key.txt
             wallet-address.txt
-            tasks.json
+            tasks-all.json
             candidates.json
           retention-days: 1
           if-no-files-found: error
