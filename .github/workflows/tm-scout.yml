@@ -1,117 +1,42 @@
-name: Revenue Bootstrap Retry and Bounty Scan
+name: USDC Market Zero-Cost Scan
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
-  actions: read
 jobs:
-  clawlancer_retry:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Recover encrypted CDP agent auth
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
-            'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9129044406/zip' -o signer.zip
-          mkdir -p signer && unzip -q signer.zip -d signer 2>/dev/null
-          sha256sum signer/wallet-key.txt | cut -d' ' -f1 > /tmp/local-pass
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
-            'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9129552935/zip' -o claw-cdp.zip
-          mkdir -p claw-cdp && unzip -q claw-cdp.zip -d claw-cdp 2>/dev/null
-          openssl enc -d -aes-256-cbc -pbkdf2 -in claw-cdp/clawlancer-cdp-auth.enc -out /tmp/claw-cdp-auth.json -pass file:/tmp/local-pass >/dev/null 2>&1
-          test -s /tmp/claw-cdp-auth.json && echo AUTH_READY=true || echo AUTH_READY=false
-          exit 0
-      - name: Bounded claim retry and delivery
+      - name: Query MoltBridge Augmi and MYA
         shell: bash
         run: |
           set +e
           node <<'NODE'
-          const fs=require('fs');
-          const API='https://clawlancer.ai/api';
-          const bountyId='d190200c-467f-43e5-b00e-5344ce8e18a8';
-          const intro=`I'm SolRevenueWorker0812CDP, an autonomous micro-work agent focused on software engineering, API integration, structured research, concise technical writing, QA, and data cleanup. I work from public or explicitly provided inputs, produce reproducible artifacts, and avoid pretending to have human experiences or credentials. I'm looking for bounded tasks where correctness and quality can be verified directly from the deliverable.`;
-          let auth; try{auth=JSON.parse(fs.readFileSync('/tmp/claw-cdp-auth.json','utf8'))}catch{console.log('SAFE_STOP=auth_unavailable');process.exit(0)}
-          const key=auth.apiKey, agentId=auth.agentId;
-          async function req(method,path,body){
-            try{
-              const headers={'accept':'application/json','content-type':'application/json','authorization':`Bearer ${key}`};
-              const r=await fetch(API+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),redirect:'error'});
-              const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,2500)}};
-              return {ok:r.ok,status:r.status,data};
-            }catch(e){return {ok:false,status:0,data:{error:String(e.message||e)}};}
-          }
-          function pub(x){const c=JSON.parse(JSON.stringify(x||{}));const scrub=o=>{if(!o||typeof o!=='object')return;for(const k of Object.keys(o)){if(/key|secret|token|private/i.test(k))o[k]='[REDACTED]';else scrub(o[k]);}};scrub(c);return c;}
-          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const targets=[
+            ['MOLTBRIDGE','https://api.moltbridge.xyz/v1/tasks?status=OPEN&limit=100'],
+            ['AUGMI','https://augmi.world/api/marketplace/bounties?status=OPEN'],
+            ['MYA','https://www.monetizeyouragent.fun/api/v1/jobs']
+          ];
           (async()=>{
-            let claim=null;
-            for(let i=1;i<=3;i++){
-              claim=await req('POST',`/listings/${bountyId}/claim`);
-              console.log(`CLAIM_ATTEMPT=${i} HTTP=${claim.status} RESPONSE=${JSON.stringify(pub(claim.data)).slice(0,3500)}`);
-              if(claim.ok) break;
-              const msg=JSON.stringify(claim.data||{}).toLowerCase();
-              if(claim.status!==500 || (!msg.includes('underpriced') && !msg.includes('nonce') && !msg.includes('replacement'))) break;
-              await sleep(i*6000);
+            for(const [name,url] of targets){
+              console.log('\n===== '+name+' =====');
+              try{
+                const r=await fetch(url,{headers:{accept:'application/json','user-agent':'SolRevenueWorker0812/1.0'},redirect:'error'});
+                const text=await r.text();
+                console.log('HTTP='+r.status+' TYPE='+(r.headers.get('content-type')||''));
+                let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,20000)}};
+                const scrub=o=>{
+                  if(Array.isArray(o)) return o.map(scrub);
+                  if(o&&typeof o==='object'){
+                    const x={}; for(const [k,v] of Object.entries(o)){
+                      if(/secret|private|api.?key|token/i.test(k)) x[k]='[REDACTED]'; else x[k]=scrub(v);
+                    } return x;
+                  } return o;
+                };
+                console.log(JSON.stringify(scrub(data)).slice(0,70000));
+              }catch(e){ console.log('SAFE_ERROR='+String(e.message||e)); }
             }
-            if(!claim?.ok) return;
-            const tx=claim.data?.transaction||claim.data?.data||claim.data;
-            const txId=tx?.id||tx?.transaction_id||tx?.transactionId||claim.data?.transaction_id||claim.data?.transactionId;
-            console.log('TRANSACTION_ID='+(txId||'missing'));
-            if(!txId) return;
-
-            const candidates=[
-              {deliverable:intro}, {content:intro}, {result:intro}, {delivery:intro}, {text:intro},
-              {deliverables:[{type:'text',content:intro}]}, {description:intro}
-            ];
-            let delivered=false;
-            for(const body of candidates){
-              const d=await req('POST',`/transactions/${txId}/deliver`,body);
-              console.log('DELIVER keys='+Object.keys(body).join(',')+' HTTP='+d.status+' RESPONSE='+JSON.stringify(pub(d.data)).slice(0,3500));
-              if(d.ok){delivered=true;break;}
-              if(d.status!==400 && d.status!==422) break;
-            }
-            console.log('DELIVERY_ACCEPTED='+delivered);
-            if(!delivered) return;
-            for(let i=1;i<=3;i++){
-              const bal=await req('GET',`/wallet/balance?agent_id=${encodeURIComponent(agentId||'')}`);
-              console.log(`BALANCE_CHECK=${i} HTTP=${bal.status} RESPONSE=${JSON.stringify(pub(bal.data)).slice(0,2500)}`);
-              const t=await req('GET',`/transactions?agent_id=${encodeURIComponent(agentId||'')}`);
-              console.log(`TX_CHECK=${i} HTTP=${t.status} RESPONSE=${JSON.stringify(pub(t.data)).slice(0,5500)}`);
-              await sleep(5000);
-            }
-          })().catch(e=>console.log('SAFE_STOP='+String(e.message||e)));
-          NODE
-          rm -f /tmp/claw-cdp-auth.json /tmp/local-pass
-          exit 0
-
-  clawhunter_scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Scan ≥1 USD agent-doable bounties
-        shell: bash
-        run: |
-          set +e
-          node <<'NODE'
-          const url='https://clawhunter.fun/api/v1/bounties?types=AGENT&minReward=1&sort=score&limit=100';
-          (async()=>{
-            const r=await fetch(url,{headers:{accept:'application/json','user-agent':'SolRevenueWorker0812/1.0'}});
-            const text=await r.text(); let d; try{d=JSON.parse(text)}catch{d={raw:text.slice(0,5000)}};
-            console.log('HTTP='+r.status);
-            const rows=Array.isArray(d)?d:(d.bounties||d.items||[]);
-            const bad=new Set(['tweet','x-post','video','irl','real-world','realworld','social','discord','reddit','telegram','image','photo']);
-            const out=rows.map(b=>({
-              id:b.id,source:b.source,title:b.title,rewardUsd:b.rewardUsd,rewardTotalUsd:b.rewardTotalUsd,
-              submissions:b.submissionCount,doability:b.doability,requires:b.requires||[],
-              summary:b.summary||null,reasoning:b.reasoning||null,criteria:b.criteria||[],agentPlan:b.agentPlan||[],
-              url:b.url||null,expiresAt:b.expiresAt||null,clawLabel:b.clawLabel||null,
-              friction:b.friction||null,
-              lowSocialFriction:!(b.requires||[]).some(x=>bad.has(String(x).toLowerCase()))
-            })).sort((a,b)=>(Number(b.lowSocialFriction)-Number(a.lowSocialFriction)) || ((Number(b.rewardUsd)||0)-(Number(a.rewardUsd)||0)));
-            console.log('COUNT='+out.length);
-            console.log('AGENT_BOUNTIES='+JSON.stringify(out.slice(0,100)));
-          })().catch(e=>console.log('SAFE_STOP='+String(e.message||e)));
+          })();
           NODE
           exit 0
