@@ -1,4 +1,4 @@
-name: Taskmarket Submit Audit
+name: Taskmarket CLI Inspect
 
 on:
   push:
@@ -11,110 +11,28 @@ permissions:
   actions: read
 
 jobs:
-  submit:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Reconstruct and verify submission
+      - name: Install Taskmarket CLI
+        shell: bash
+        run: npm install -g @lucid-agents/taskmarket@latest
+      - name: Inspect exact non-interactive commands
         shell: bash
         run: |
-          set -euo pipefail
-          cat .tm-work/chunk_* | base64 -d > submission.zip
-          echo '505493119e95e3a56d0e70a6f73ea0efac40a4270d3be528cac1d09f774e33cb  submission.zip' | sha256sum -c -
-          mkdir submission
-          unzip -q submission.zip -d submission
-          echo 'c1d071da78d07e948da25500ea2d7bab58a565decee5ad59cdb294ad2e89b667  submission/AUDIT-REPORT.md' | sha256sum -c -
-          echo '63c79fadf19817e326cac2032c1b614a973eae91b86a6fd7b88b9207c9a31671  submission/FINDINGS.json' | sha256sum -c -
-          echo '481ed681bbb27157c89b969e1b7d219af7f7f6d8ee6ff694d73d02c8e486f494  submission/METHOD.md' | sha256sum -c -
-
-      - name: Recover isolated worker key from private artifact
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
-            'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9128054472/zip' -o worker-key.zip
-          mkdir worker-key
-          unzip -q worker-key.zip -d worker-key
-          test -f worker-key/wallet-key.txt
-          chmod 600 worker-key/wallet-key.txt
-
-      - name: Sign and submit work
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --no-save ethers@6 >/dev/null 2>&1
-          node <<'NODE'
-          const fs = require('fs');
-          const { Wallet } = require('ethers');
-
-          const taskId = '0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682';
-          const expectedWorker = '0x073F1b940fB6bb86Fe8dc0f627cCF3a78471A0de';
-          const pk = fs.readFileSync('worker-key/wallet-key.txt', 'utf8').trim();
-          const wallet = new Wallet(pk);
-          if (wallet.address.toLowerCase() !== expectedWorker.toLowerCase()) {
-            throw new Error(`Worker address mismatch: ${wallet.address}`);
-          }
-
-          async function main() {
-            const signature = await wallet.signMessage(`taskmarket:submit:${taskId}`);
-            const artifacts = [
-              ['AUDIT-REPORT.md', 'text/markdown'],
-              ['FINDINGS.json', 'application/json'],
-              ['METHOD.md', 'text/markdown'],
-            ].map(([fileName, mimeType]) => ({
-              fileName,
-              mimeType,
-              file: fs.readFileSync(`submission/${fileName}`).toString('base64'),
-            }));
-
-            const payload = {
-              taskId,
-              workerAddress: wallet.address,
-              artifacts,
-              signature,
-            };
-
-            const res = await fetch(`https://api.taskmarket.dev/api/tasks/${taskId}/submissions`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json', 'accept': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-            const text = await res.text();
-            let body;
-            try { body = JSON.parse(text); } catch { body = { raw: text }; }
-            fs.writeFileSync('submission-receipt.json', JSON.stringify({
-              httpStatus: res.status,
-              workerAddress: wallet.address,
-              taskId,
-              response: body,
-            }, null, 2));
-            console.log(`TASKMARKET_HTTP_STATUS=${res.status}`);
-            console.log(`WORKER_ADDRESS=${wallet.address}`);
-            console.log(`TASKMARKET_RESPONSE=${JSON.stringify(body)}`);
-            if (!res.ok) process.exit(2);
-
-            const taskRes = await fetch(`https://api.taskmarket.dev/api/tasks/${taskId}`, { headers: { accept: 'application/json' } });
-            const taskText = await taskRes.text();
-            fs.writeFileSync('task-after.json', taskText);
-          }
-
-          main().catch(err => { console.error(err); process.exit(1); });
-          NODE
-
-      - name: Upload safe submission receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: taskmarket-submission-receipt
-          path: |
-            submission-receipt.json
-            task-after.json
-          retention-days: 1
-          if-no-files-found: warn
+          set +e
+          echo '=== VERSION ==='
+          taskmarket --version
+          echo '=== WALLET IMPORT HELP ==='
+          taskmarket wallet import --help
+          echo '=== SUBMIT HELP ==='
+          taskmarket task submit --help
+          echo '=== LEGAL STATUS HELP ==='
+          taskmarket legal status --help
+          echo '=== LEGAL ACCEPT HELP ==='
+          taskmarket legal accept --help
+          echo '=== WITHDRAWAL HELP ==='
+          taskmarket wallet set-withdrawal-address --help
