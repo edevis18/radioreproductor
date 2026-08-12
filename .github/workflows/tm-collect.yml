@@ -1,0 +1,22 @@
+name: Taskmarket Collection Check
+on:
+  push:
+    branches: [tm-runner-20260811]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Taskmarket public state
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://api.taskmarket.dev'
+          ADDR='0x073F1b940fB6bb86Fe8dc0f627cCF3a78471A0de'
+          T1='0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682'
+          T2='0x2c85f49583e4f402fed28f19210de17ab8fcc4edd1cdff43d53560e358bce917'
+          echo -n 'BALANCE='; curl -fsSL "$BASE/api/wallet/balance?address=$ADDR"; echo
+          echo -n 'WITHDRAWAL='; curl -fsSL "$BASE/api/wallet/withdrawal-address?address=$ADDR"; echo
+          echo -n 'TASK1='; curl -fsSL "$BASE/api/tasks/$T1"; echo
+          echo -n 'TASK2='; curl -fsSL "$BASE/api/tasks/$T2"; echo
