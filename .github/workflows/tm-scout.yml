@@ -1,59 +1,17 @@
-name: Taskmarket Settlement Check
+name: Taskmarket Balance Check
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
-  actions: read
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Recover isolated worker key
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
-            'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9128054472/zip' -o worker-key.zip
-          mkdir worker-key && unzip -q worker-key.zip -d worker-key
-          chmod 600 worker-key/wallet-key.txt
-      - name: Read current submissions and task states
+      - name: Query public wallet payout state
         shell: bash
         run: |
           set -euo pipefail
-          npm install --no-save ethers@6 >/dev/null 2>&1
-          node <<'NODE'
-          const fs=require('fs');
-          const {Wallet}=require('ethers');
-          const API='https://api.taskmarket.dev';
-          const wallet=new Wallet(fs.readFileSync('worker-key/wallet-key.txt','utf8').trim());
-          const audit='0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682';
-          const game='0x2c85f49583e4f402fed28f19210de17ab8fcc4edd1cdff43d53560e358bce917';
-          async function jget(path,headers={}){const r=await fetch(API+path,{headers:{accept:'application/json',...headers}}); const t=await r.text(); let d;try{d=JSON.parse(t)}catch{d={raw:t}};return{status:r.status,data:d}}
-          async function main(){
-            const sig=await wallet.signMessage(`taskmarket:read:${wallet.address.toLowerCase()}`);
-            const auth={'X-Taskmarket-Caller-Address':wallet.address,'X-Taskmarket-Caller-Signature':sig};
-            const mine=await jget(`/api/submissions/mine?workerAddress=${wallet.address}`,auth);
-            const a=await jget(`/api/tasks/${audit}`); const g=await jget(`/api/tasks/${game}`);
-            const rows=(mine.data.submissions||mine.data||[]);
-            const relevant=Array.isArray(rows)?rows.filter(x=>[audit,game].includes(x.taskId||x.task?.id)):rows;
-            console.log('WORKER='+wallet.address);
-            console.log('SUBMISSIONS='+JSON.stringify(relevant));
-            function slim(x){const t=x.data||{};return {status:x.status,taskStatus:t.status,submissionCount:t.submissionCount,selectedWorker:t.selectedWorker,winningSubmissionId:t.winningSubmissionId,payouts:t.payouts,completedAt:t.completedAt,expiryTime:t.expiryTime,pendingActions:t.pendingActions}}
-            console.log('AUDIT_TASK='+JSON.stringify(slim(a)));
-            console.log('GAME_TASK='+JSON.stringify(slim(g)));
-          }
-          main().catch(e=>{console.error(e);process.exit(1)});
-          NODE
-      - name: Inspect first-party payout endpoints
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install -g @lucid-agents/taskmarket@latest >/dev/null 2>&1
-          ROOT="$(npm root -g)/@lucid-agents/taskmarket"
-          grep -RniE "wallet balance|withdraw-usdc|withdrawal-address|usdc-balance|wallet/balance|withdrawFor" "$ROOT/dist" --include='*.js' | head -n 80 || true
+          ADDR='0x073F1b940fB6bb86Fe8dc0f627cCF3a78471A0de'
+          echo -n 'BALANCE='; curl -fsSL "https://api.taskmarket.dev/api/wallet/balance?address=$ADDR"; echo
+          echo -n 'WITHDRAWAL='; curl -fsSL "https://api.taskmarket.dev/api/wallet/withdrawal-address?address=$ADDR"; echo
