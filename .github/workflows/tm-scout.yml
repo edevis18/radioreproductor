@@ -1,30 +1,50 @@
-name: Taskmarket Signing Inspect
+name: Taskmarket Signing Extract
 
 on:
   push:
     branches:
       - tm-runner-20260811
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  inspect-signing:
+  extract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install Taskmarket CLI
-        run: npm install -g @lucid-agents/taskmarket@latest
-      - name: Locate submission signing implementation
+      - run: npm install -g @lucid-agents/taskmarket@latest
+      - name: Print focused source windows
         shell: bash
         run: |
-          set -euo pipefail
-          ROOT="$(npm root -g)/@lucid-agents/taskmarket"
-          echo "PACKAGE_ROOT=$ROOT"
-          echo '=== MATCHES ==='
-          grep -RniE 'submit.*signature|signature.*submit|workerAddress|signMessage|personal_sign|submissions' "$ROOT" --include='*.js' --include='*.mjs' --include='*.cjs' | head -n 120 || true
-          echo '=== FILE LIST ==='
-          find "$ROOT" -maxdepth 3 -type f | sort | head -n 120
+          node <<'NODE'
+          const fs = require('fs');
+          const cp = require('child_process');
+          const root = cp.execSync('npm root -g').toString().trim() + '/@lucid-agents/taskmarket';
+          const p = root + '/dist/index.js';
+          const s = fs.readFileSync(p,'utf8');
+          const needles = [
+            'Submit work for a task',
+            'task submit',
+            '/submissions',
+            'workerAddress',
+            'submissionMessage',
+            'submitMessage',
+            'taskmarket:submit',
+            'signMessage({ message'
+          ];
+          for (const n of needles) {
+            console.log('\n=== NEEDLE:', n, '===');
+            let from = 0, count = 0;
+            while (count < 8) {
+              const i = s.indexOf(n, from);
+              if (i < 0) break;
+              console.log(`--- index ${i} ---`);
+              console.log(s.slice(Math.max(0,i-1800), Math.min(s.length,i+2600)));
+              from = i + n.length;
+              count++;
+            }
+          }
+          NODE
