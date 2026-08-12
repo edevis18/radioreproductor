@@ -30,9 +30,21 @@ jobs:
           assert int(dom.get('chainId',0))==8453
           assert dom.get('verifyingContract','').lower()=='0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
           print(f'PREFLIGHT_BALANCE_USDC={amount/1_000_000:.6f}')
+          print('WITHDRAWAL_DESTINATION='+w.get('withdrawalAddress',''))
+          print('USDC_CHAIN_ID='+str(dom.get('chainId')))
+          print('USDC_CONTRACT='+dom.get('verifyingContract',''))
           open('/tmp/amount','w').write(str(amount))
           PY
           echo "amount=$(cat /tmp/amount)" >> "$GITHUB_OUTPUT"
+      - name: Check monitored task settlement states
+        shell: bash
+        run: |
+          set -euo pipefail
+          API='https://api.taskmarket.dev'
+          AUDIT='0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682'
+          GAME='0x2c85f49583e4f402fed28f19210de17ab8fcc4edd1cdff43d53560e358bce917'
+          echo -n 'AUDIT_TASK='; curl -fsSL "$API/api/tasks/$AUDIT"; echo
+          echo -n 'GAME_TASK='; curl -fsSL "$API/api/tasks/$GAME"; echo
       - name: Recover private signer only if earned funds exist
         if: steps.preflight.outputs.amount != '0'
         shell: bash
