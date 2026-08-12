@@ -1,19 +1,22 @@
-name: AgentPact Active Buyer Rank
+name: Taskmarket Lowest Competition Scan
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  rank:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Rank open paid needs by buyer activity
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Inspect all live open tasks and submissions
         shell: bash
         run: |
           set +e
           node <<'NODE'
-          const API='https://api.agentpact.xyz/api';
+          const API='https://api.taskmarket.dev';
           async function get(path){
             try{
               const r=await fetch(API+path,{headers:{accept:'application/json'}});
@@ -21,57 +24,36 @@ jobs:
               return {ok:r.ok,status:r.status,data:d};
             }catch(e){return {ok:false,status:0,data:{error:String(e.message||e)}};}
           }
-          function arr(d){return Array.isArray(d)?d:(d?.items||d?.needs||d?.data||[])}
+          const arr=d=>Array.isArray(d)?d:(d?.tasks||d?.items||d?.data||[]);
           (async()=>{
-            const page=await get('/needs?status=open&limit=200');
-            const needs=arr(page.data).filter(n=>Number(n.budget_max??n.budgetMax??0)>=1 && String(n.currency||'USDC').toUpperCase()==='USDC');
-            console.log('OPEN_PAID_NEEDS='+needs.length+' LIST_HTTP='+page.status);
-            const byBuyer=new Map();
-            for(const n of needs){
-              const id=n.agent_id||n.agentId;
-              if(id && !byBuyer.has(id)) byBuyer.set(id,null);
+            const q=await get('/api/tasks?status=open&limit=100&sort=reward_desc');
+            const tasks=arr(q.data);
+            const out=[];
+            for(const t of tasks){
+              const id=t.id||t.taskId;
+              const full=await get('/api/tasks/'+id);
+              const x=full.ok?full.data:t;
+              let subs=null;
+              const s=await get('/api/tasks/'+id+'/submissions');
+              if(s.ok){const a=Array.isArray(s.data)?s.data:(s.data?.submissions||s.data?.items||[]);subs=a.length;}
+              out.push({
+                id,
+                title:x.title||t.title||null,
+                reward:x.reward||x.taskReward||x.rewardAmount||t.reward||null,
+                mode:x.mode||x.taskMode||t.mode||null,
+                status:x.status||x.taskStatus||t.status||null,
+                submissions:subs ?? x.submissionCount ?? t.submissionCount ?? null,
+                expiry:x.expiryTime||x.expiresAt||x.deadline||t.expiryTime||null,
+                description:String(x.description||x.taskDescription||t.description||'').replace(/\s+/g,' ').slice(0,2200),
+                requirements:x.requirements||x.acceptanceCriteria||x.criteria||null,
+                deliverable:x.deliverable||x.deliverableType||null,
+                repo:x.repository||x.repo||x.repositoryUrl||null,
+                stakeRequired:x.stakeRequired??x.requiresStake??null,
+                pendingActions:x.pendingActions||null
+              });
             }
-            const ids=[...byBuyer.keys()];
-            const batch=20;
-            for(let i=0;i<ids.length;i+=batch){
-              const slice=ids.slice(i,i+batch);
-              const rows=await Promise.all(slice.map(async id=>[id,await get('/agents/'+id)]));
-              for(const [id,x] of rows) byBuyer.set(id,x.ok?x.data:null);
-            }
-            const now=Date.now();
-            const ranked=needs.map(n=>{
-              const buyer=byBuyer.get(n.agent_id||n.agentId)||{};
-              const last=buyer.last_seen_at?Date.parse(buyer.last_seen_at):0;
-              const ageHours=last?((now-last)/3600000):null;
-              let score=0;
-              if(buyer.auto_buy_enabled) score+=100;
-              if(buyer.autoclose_enabled) score+=30;
-              if(buyer.presence_status==='online') score+=80;
-              if(ageHours!=null){ if(ageHours<1)score+=60; else if(ageHours<24)score+=40; else if(ageHours<168)score+=20; }
-              score+=Math.min(20,Number(n.budget_max??n.budgetMax??0));
-              const created=n.created_at||n.createdAt;
-              if(created){const h=(now-Date.parse(created))/3600000;if(h<24)score+=30;else if(h<168)score+=15;}
-              return {
-                score,
-                needId:n.id,
-                title:n.title,
-                budgetMin:n.budget_min??n.budgetMin,
-                budgetMax:n.budget_max??n.budgetMax,
-                category:n.category,
-                tags:n.tags,
-                createdAt:created,
-                description:String(n.description_md||n.descriptionMd||'').replace(/\s+/g,' ').slice(0,500),
-                buyerId:n.agent_id||n.agentId,
-                buyerHandle:buyer.handle||null,
-                autoBuy:Boolean(buyer.auto_buy_enabled),
-                autoclose:Boolean(buyer.autoclose_enabled),
-                presence:buyer.presence_status||null,
-                lastSeen:buyer.last_seen_at||null,
-                ageHours:ageHours==null?null:Number(ageHours.toFixed(2)),
-                acceptedPaymentMethods:n.accepted_payment_methods||null
-              };
-            }).sort((a,b)=>b.score-a.score).slice(0,35);
-            console.log('RANKED='+JSON.stringify(ranked));
+            out.sort((a,b)=>(Number(a.submissions??999)-Number(b.submissions??999)) || (Number(b.reward||0)-Number(a.reward||0)));
+            console.log('LIVE_TASKS='+JSON.stringify(out));
           })().catch(e=>console.log('SAFE_STOP='+String(e.message||e)));
           NODE
           exit 0
