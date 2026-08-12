@@ -1,47 +1,29 @@
-name: Taskmarket Requester Quality Check
+name: Alluviance Canonical Packet Verify
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Score requester payment history
+      - name: Verify exact published packet zip
         shell: bash
         run: |
           set +e
-          node <<'NODE'
-          const API='https://api.taskmarket.dev';
-          const requesters=[
-            ['GoldenEye','0x683bfEE2e685E6061EaC3e3d33Eee7ae5807E6c7'],
-            ['Alluviance','0x64b466023d360938DbFa8c1df74FAE442b9B2555']
-          ];
-          async function get(path){
-            try{
-              const r=await fetch(API+path,{headers:{accept:'application/json'}});
-              const text=await r.text(); let d; try{d=JSON.parse(text)}catch{d={raw:text.slice(0,3000)}};
-              return {ok:r.ok,status:r.status,data:d};
-            }catch(e){return {ok:false,status:0,data:{error:String(e.message||e)}};}
-          }
-          (async()=>{
-            for(const [name,address] of requesters){
-              const stats=await get('/api/agents/stats?address='+encodeURIComponent(address));
-              console.log(`STATS ${name} HTTP=${stats.status} DATA=${JSON.stringify(stats.data).slice(0,7000)}`);
-              const hist=await get('/api/tasks?status=ALL&requester='+encodeURIComponent(address)+'&limit=100&sort=newest');
-              const rows=Array.isArray(hist.data)?hist.data:(hist.data?.tasks||hist.data?.items||[]);
-              const summary={total:rows.length,completed:0,open:0,expired:0,cancelled:0,other:0,totalReward:0,totalAwarded:0,tasks:[]};
-              for(const t of rows){
-                const st=String(t.status||'').toLowerCase();
-                if(st==='completed') summary.completed++; else if(st==='open')summary.open++; else if(st==='expired')summary.expired++; else if(st==='cancelled')summary.cancelled++; else summary.other++;
-                summary.totalReward+=Number(t.reward||0)/1e6;
-                const awards=Array.isArray(t.awards)?t.awards:[];
-                summary.totalAwarded+=awards.reduce((s,a)=>s+Number(a.amount||a.reward||a.payout||0)/1e6,0);
-                summary.tasks.push({id:t.id,status:t.status,reward:Number(t.reward||0)/1e6,awardCount:t.awardCount??awards.length,createdAt:t.createdAt,expiryTime:t.expiryTime,submissionCount:t.submissionCount});
-              }
-              console.log(`HISTORY ${name} HTTP=${hist.status} SUMMARY=${JSON.stringify(summary).slice(0,20000)}`);
-            }
-          })().catch(e=>console.log('SAFE_STOP='+String(e.message||e)));
-          NODE
+          URL='https://raw.githubusercontent.com/johnbpetersen/taskmarket-product-zero/eff11b336a6b753122c3ffad99d706eb575ba4b0/alluviance-product-zero-v0.1.zip'
+          EXPECTED='7a8b9fc477698bf86e2cedc98a1cee69503e7a5d575c60ac2ff40d1d8a02166b'
+          curl -fL --retry 2 --retry-delay 1 "$URL" -o packet.zip
+          RC=$?
+          if [ "$RC" -ne 0 ]; then echo "DOWNLOAD_RC=$RC"; exit 0; fi
+          BYTES=$(wc -c < packet.zip)
+          SHA=$(sha256sum packet.zip | cut -d' ' -f1)
+          echo "ZIP_BYTES=$BYTES"
+          echo "ZIP_SHA256=$SHA"
+          if [ "$SHA" = "$EXPECTED" ]; then echo 'CANONICAL_ZIP_VERIFY=PASS'; else echo 'CANONICAL_ZIP_VERIFY=MISMATCH'; fi
+          mkdir -p pkt
+          unzip -q packet.zip -d pkt
+          cd pkt/* 2>/dev/null || cd pkt
+          if [ -f PACKET-SHA256SUMS.txt ]; then sha256sum -c PACKET-SHA256SUMS.txt; fi
           exit 0
