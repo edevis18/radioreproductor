@@ -1,23 +1,22 @@
-name: GoldenEye Hash Diagnostic
+name: GoldenEye Chunk Export
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  diagnose:
+  export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify every staged chunk
-        shell: bash
+      - name: Prepare suspect chunks
         run: |
-          set +e
-          wc -c .tm-work/ge.part.*
-          sha256sum .tm-work/ge.part.*
-          cat .tm-work/ge.part.* > /tmp/goldeneye.b64
-          echo "B64_BYTES=$(wc -c < /tmp/goldeneye.b64)"
-          echo "B64_SHA=$(sha256sum /tmp/goldeneye.b64 | cut -d' ' -f1)"
-          base64 -d /tmp/goldeneye.b64 > /tmp/goldeneye-dam.html
-          echo "HTML_BYTES=$(wc -c < /tmp/goldeneye-dam.html)"
-          echo "HTML_SHA=$(sha256sum /tmp/goldeneye-dam.html | cut -d' ' -f1)"
+          mkdir export
+          cp .tm-work/ge.part.00 export/current.part.00
+          cp .tm-work/ge.part.02 export/current.part.02
+          sha256sum export/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goldeneye-suspect-chunks
+          path: export/
+          retention-days: 1
