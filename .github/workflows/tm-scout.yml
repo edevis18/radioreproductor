@@ -1,4 +1,4 @@
-name: Taskmarket CLI Inspect
+name: Taskmarket Signing Inspect
 
 on:
   push:
@@ -8,31 +8,23 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  inspect:
+  inspect-signing:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - name: Install Taskmarket CLI
-        shell: bash
         run: npm install -g @lucid-agents/taskmarket@latest
-      - name: Inspect exact non-interactive commands
+      - name: Locate submission signing implementation
         shell: bash
         run: |
-          set +e
-          echo '=== VERSION ==='
-          taskmarket --version
-          echo '=== WALLET IMPORT HELP ==='
-          taskmarket wallet import --help
-          echo '=== SUBMIT HELP ==='
-          taskmarket task submit --help
-          echo '=== LEGAL STATUS HELP ==='
-          taskmarket legal status --help
-          echo '=== LEGAL ACCEPT HELP ==='
-          taskmarket legal accept --help
-          echo '=== WITHDRAWAL HELP ==='
-          taskmarket wallet set-withdrawal-address --help
+          set -euo pipefail
+          ROOT="$(npm root -g)/@lucid-agents/taskmarket"
+          echo "PACKAGE_ROOT=$ROOT"
+          echo '=== MATCHES ==='
+          grep -RniE 'submit.*signature|signature.*submit|workerAddress|signMessage|personal_sign|submissions' "$ROOT" --include='*.js' --include='*.mjs' --include='*.cjs' | head -n 120 || true
+          echo '=== FILE LIST ==='
+          find "$ROOT" -maxdepth 3 -type f | sort | head -n 120
