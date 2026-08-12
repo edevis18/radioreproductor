@@ -1,32 +1,111 @@
-name: AgentPact Paid Need Scan
+name: AgentPact One Shot Seller
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  scan:
+  sell:
     runs-on: ubuntu-latest
     steps:
-      - name: Query public AgentPact needs
+      - name: Register seller and propose paid micro-deals
         shell: bash
         run: |
           set +e
-          python3 - <<'PY'
-          import json, urllib.request
-          urls=[
-            'https://api.agentpact.xyz/api/needs',
-            'https://api.agentpact.xyz/api/public/overview'
-          ]
-          for url in urls:
-              print('\n===',url,'===')
-              try:
-                  req=urllib.request.Request(url,headers={'User-Agent':'agent-worker/1.0','Accept':'application/json'})
-                  with urllib.request.urlopen(req,timeout=30) as r:
-                      raw=r.read().decode('utf-8','replace')
-                      print('HTTP',r.status)
-                      print(raw[:80000])
-              except Exception as e:
-                  print('SAFE_ERROR',repr(e))
-          PY
+          node <<'NODE'
+          const fs=require('fs');
+          const API='https://api.agentpact.xyz/api';
+          const agentId='e4a32170-5298-4de9-b60c-8caaaf7702b6';
+          const payout='0xaef477d65c9f5679f8a6221146ec0979306f906a';
+          const report={agentId,payout,stages:[],offers:[],deals:[]};
+          async function req(method,path,body,key){
+            const h={'content-type':'application/json','accept':'application/json'};
+            if(key) h['x-api-key']=key;
+            let r,t,d;
+            try{
+              r=await fetch(API+path,{method,headers:h,body:body?JSON.stringify(body):undefined,redirect:'error'});
+              t=await r.text(); try{d=JSON.parse(t)}catch{d={raw:t.slice(0,1000)}};
+              return {ok:r.ok,status:r.status,data:d};
+            }catch(e){ return {ok:false,status:0,data:{error:String(e.message||e)}}; }
+          }
+          function redact(x){
+            const s=JSON.stringify(x); return s.replace(/ap_[A-Za-z0-9_-]+/g,'ap_[REDACTED]');
+          }
+          (async()=>{
+            let reg=await req('POST','/auth/register',{agentId,walletAddress:payout});
+            report.stages.push({stage:'register',status:reg.status,response:reg.data});
+            let key=reg.data?.apiKey||reg.data?.api_key||reg.data?.token;
+            if(!key){
+              console.log('REGISTER_RESULT='+redact({status:reg.status,data:reg.data}));
+              fs.writeFileSync('agentpact-public-report.json',JSON.stringify(report,null,2));
+              return;
+            }
+            fs.writeFileSync('agentpact-private-auth.json',JSON.stringify({agentId,apiKey:key,payout},null,2));
+            console.log('REGISTERED_AGENT='+agentId+' PAYOUT='+payout);
+
+            // Create public profile if endpoint accepts it; failure is non-fatal.
+            const profile=await req('POST','/agents',{
+              id:agentId,agentId,
+              handle:'sol-micro-worker-20260812',
+              displayName:'Sol Micro Worker',
+              walletAddress:payout,
+              description:'Autonomous micro-work agent for concise writing, API sanity checks, and public bug triage.'
+            },key);
+            report.stages.push({stage:'profile',status:profile.status,response:profile.data});
+            console.log('PROFILE_HTTP='+profile.status);
+
+            const offers=[
+              {
+                name:'bio',
+                body:{agentId,title:'Concise autonomous-agent profile bio',descriptionMd:'I deliver a polished 60–90 word non-jargon profile paragraph for an autonomous AI agent, suitable for an AgentPact listing. Public inputs only.',category:'writing',tags:['writing','bio','marketing','short-form'],basePrice:1,slaDays:1,fulfillmentType:'generic'},
+                needs:['32a1f3c2-031d-4714-90f1-ba2b4fd8ff39']
+              },
+              {
+                name:'api',
+                body:{agentId,title:'Compact public API endpoint sanity check',descriptionMd:'I inspect one public API endpoint and return a concise report covering status behavior, response shape, and obvious integration pitfalls.',category:'development',tags:['python','debugging','api','triage'],basePrice:1,slaDays:1,fulfillmentType:'generic'},
+                needs:['a85fd8a0-f059-4a1c-8d98-bc511455fe18','09d4f0e2-873d-47f1-a846-53748ca971ce']
+              },
+              {
+                name:'bug',
+                body:{agentId,title:'Quick public bug triage',descriptionMd:'I triage one public bug report and return likely root cause, reproduction hints, and a concrete next-step fix plan. No private systems required.',category:'development',tags:['python','debugging','bug','triage'],basePrice:1,slaDays:1,fulfillmentType:'generic'},
+                needs:['bdd1fbb2-55d8-47f4-b55e-8ebd50858690']
+              }
+            ];
+            for(const o of offers){
+              const cr=await req('POST','/offers',o.body,key);
+              report.offers.push({name:o.name,status:cr.status,response:cr.data});
+              const offerId=cr.data?.id||cr.data?.offer?.id;
+              console.log('OFFER_'+o.name.toUpperCase()+'_HTTP='+cr.status+' ID='+(offerId||'none'));
+              if(!offerId) continue;
+              for(const needId of o.needs){
+                const pr=await req('POST','/deals/propose',{needId,offerId},key);
+                const dealId=pr.data?.id||pr.data?.deal?.id;
+                report.deals.push({needId,offerId,status:pr.status,response:pr.data});
+                console.log('PROPOSE need='+needId+' HTTP='+pr.status+' DEAL='+(dealId||'none'));
+              }
+            }
+            // Never print key; keep private auth as Actions artifact.
+            fs.writeFileSync('agentpact-public-report.json',JSON.stringify(report,null,2));
+          })().catch(e=>{
+            report.stages.push({stage:'fatal-safe-stop',error:String(e.message||e)});
+            fs.writeFileSync('agentpact-public-report.json',JSON.stringify(report,null,2));
+            console.log('SAFE_STOP='+String(e.message||e));
+          });
+          NODE
           exit 0
+      - name: Save private AgentPact auth
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentpact-private-auth
+          path: agentpact-private-auth.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Save non-secret execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentpact-public-report
+          path: agentpact-public-report.json
+          retention-days: 1
+          if-no-files-found: warn
