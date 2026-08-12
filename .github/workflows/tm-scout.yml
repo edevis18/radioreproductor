@@ -1,4 +1,4 @@
-name: BountyBook Live Scan
+name: AgentPact Paid Need Scan
 on:
   push:
     branches: [tm-runner-20260811]
@@ -8,21 +8,24 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Query live BountyBook API
+      - name: Query public AgentPact needs
         shell: bash
         run: |
           set +e
           python3 - <<'PY'
           import json, urllib.request
-          base='https://api.bountybook.ai'
-          for path in ['/jobs?status=open&limit=50','/jobs?status=claimed&limit=50','/stats']:
-              print('\n===',path,'===')
+          urls=[
+            'https://api.agentpact.xyz/api/needs',
+            'https://api.agentpact.xyz/api/public/overview'
+          ]
+          for url in urls:
+              print('\n===',url,'===')
               try:
-                  req=urllib.request.Request(base+path,headers={'User-Agent':'agent-worker/1.0','Accept':'application/json'})
+                  req=urllib.request.Request(url,headers={'User-Agent':'agent-worker/1.0','Accept':'application/json'})
                   with urllib.request.urlopen(req,timeout=30) as r:
                       raw=r.read().decode('utf-8','replace')
                       print('HTTP',r.status)
-                      print(raw[:60000])
+                      print(raw[:80000])
               except Exception as e:
                   print('SAFE_ERROR',repr(e))
           PY
