@@ -1,17 +1,17 @@
-name: Taskmarket Alluviance Revision One Shot
+name: Taskmarket Alluviance Direct Revision One Shot
 
 on:
   push:
     branches: [tm-runner-20260811]
     paths:
-      - '.tm-work/RUN_ALLUVIANCE_REVISION_ONCE'
+      - '.tm-work/RUN_ALLUVIANCE_REVISION_DIRECT_ONCE'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: taskmarket-alluviance-revision-one-shot
+  group: taskmarket-alluviance-direct-revision-one-shot
   cancel-in-progress: false
 
 jobs:
@@ -20,67 +20,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct original submission and verify canonical packet
+      - name: Rebuild and validate exact revision
         id: preflight
         shell: bash
         run: |
           set +e
           READY=true
-          ORIGINAL_ZIP_SHA='505493119e95e3a56d0e70a6f73ea0efac40a4270d3be528cac1d09f774e33cb'
-          PACKET_SHA='7a8b9fc477698bf86e2cedc98a1cee69503e7a5d575c60ac2ff40d1d8a02166b'
-          REPORT_SHA='c1d071da78d07e948da25500ea2d7bab58a565decee5ad59cdb294ad2e89b667'
-          FINDINGS_SHA='63c79fadf19817e326cac2032c1b614a973eae91b86a6fd7b88b9207c9a31671'
-
-          cat .tm-work/chunk_00 .tm-work/chunk_01 .tm-work/chunk_02 .tm-work/chunk_03 .tm-work/chunk_04 .tm-work/chunk_05 > /tmp/alluviance-submission.b64
-          base64 -d /tmp/alluviance-submission.b64 > /tmp/alluviance-submission.zip 2>/tmp/sub-decode.err
-          SUB_RC=$?
-          SUB_SHA=$(sha256sum /tmp/alluviance-submission.zip | cut -d' ' -f1)
-          SUB_BYTES=$(wc -c < /tmp/alluviance-submission.zip)
-          echo "ORIGINAL_SUBMISSION_BYTES=$SUB_BYTES"
-          echo "ORIGINAL_SUBMISSION_SHA=$SUB_SHA"
-          [ "$SUB_RC" -eq 0 ] && [ "$SUB_SHA" = "$ORIGINAL_ZIP_SHA" ] || READY=false
-
+          cat .tm-work/chunk_00 .tm-work/chunk_01 .tm-work/chunk_02 .tm-work/chunk_03 .tm-work/chunk_04 .tm-work/chunk_05 > /tmp/submission.b64
+          base64 -d /tmp/submission.b64 > /tmp/submission.zip 2>/dev/null
+          [ "$(sha256sum /tmp/submission.zip | cut -d' ' -f1)" = '505493119e95e3a56d0e70a6f73ea0efac40a4270d3be528cac1d09f774e33cb' ] || READY=false
           rm -rf work && mkdir work
-          unzip -q /tmp/alluviance-submission.zip -d work || READY=false
-          for f in AUDIT-REPORT.md FINDINGS.json METHOD.md; do test -s "work/$f" || READY=false; done
-          [ "$(sha256sum work/AUDIT-REPORT.md | cut -d' ' -f1)" = "$REPORT_SHA" ] || READY=false
-          [ "$(sha256sum work/FINDINGS.json | cut -d' ' -f1)" = "$FINDINGS_SHA" ] || READY=false
+          unzip -q /tmp/submission.zip -d work || READY=false
+          [ "$(sha256sum work/AUDIT-REPORT.md | cut -d' ' -f1)" = 'c1d071da78d07e948da25500ea2d7bab58a565decee5ad59cdb294ad2e89b667' ] || READY=false
+          [ "$(sha256sum work/FINDINGS.json | cut -d' ' -f1)" = '63c79fadf19817e326cac2032c1b614a973eae91b86a6fd7b88b9207c9a31671' ] || READY=false
 
-          URL='https://raw.githubusercontent.com/johnbpetersen/taskmarket-product-zero/eff11b336a6b753122c3ffad99d706eb575ba4b0/alluviance-product-zero-v0.1.zip'
-          curl -fL --retry 2 --retry-delay 1 "$URL" -o /tmp/packet.zip
-          CURL_RC=$?
-          OBS_PACKET_SHA=$(sha256sum /tmp/packet.zip 2>/dev/null | cut -d' ' -f1)
-          OBS_PACKET_BYTES=$(wc -c < /tmp/packet.zip 2>/dev/null)
-          echo "CANONICAL_PACKET_BYTES=$OBS_PACKET_BYTES"
-          echo "CANONICAL_PACKET_SHA=$OBS_PACKET_SHA"
-          [ "$CURL_RC" -eq 0 ] && [ "$OBS_PACKET_SHA" = "$PACKET_SHA" ] || READY=false
-
-          rm -rf /tmp/pkt && mkdir /tmp/pkt
-          unzip -q /tmp/packet.zip -d /tmp/pkt || READY=false
-          PKT_ROOT=$(find /tmp/pkt -type f -name 'PACKET-SHA256SUMS.txt' -printf '%h\n' | head -1)
-          if [ -n "$PKT_ROOT" ]; then
-            (cd "$PKT_ROOT" && sha256sum -c PACKET-SHA256SUMS.txt) || READY=false
-          else
-            READY=false
-          fi
+          curl -fL --retry 2 --retry-delay 1 \
+            'https://raw.githubusercontent.com/johnbpetersen/taskmarket-product-zero/eff11b336a6b753122c3ffad99d706eb575ba4b0/alluviance-product-zero-v0.1.zip' \
+            -o /tmp/packet.zip >/dev/null 2>&1
+          [ "$(sha256sum /tmp/packet.zip | cut -d' ' -f1)" = '7a8b9fc477698bf86e2cedc98a1cee69503e7a5d575c60ac2ff40d1d8a02166b' ] || READY=false
+          rm -rf /tmp/pkt && mkdir /tmp/pkt && unzip -q /tmp/packet.zip -d /tmp/pkt || READY=false
+          PKT_ROOT=$(find /tmp/pkt -type f -name PACKET-SHA256SUMS.txt -printf '%h\n' | head -1)
+          [ -n "$PKT_ROOT" ] || READY=false
+          if [ -n "$PKT_ROOT" ]; then (cd "$PKT_ROOT" && sha256sum -c PACKET-SHA256SUMS.txt >/dev/null) || READY=false; fi
 
           python3 -m pip install --quiet jsonschema >/dev/null 2>&1
-          PIP_RC=$?
-          if [ "$PIP_RC" -eq 0 ] && [ -n "$PKT_ROOT" ]; then
+          if [ -n "$PKT_ROOT" ]; then
             python3 - "$PKT_ROOT/finding.schema.json" work/FINDINGS.json <<'PY'
           import json,sys
           from jsonschema import Draft7Validator
           schema=json.load(open(sys.argv[1]))
           rows=json.load(open(sys.argv[2]))
-          if not isinstance(rows,list) or len(rows)!=17:
-              raise SystemExit(f'expected 17 findings, got {type(rows).__name__}/{len(rows) if isinstance(rows,list) else "n/a"}')
+          assert isinstance(rows,list) and len(rows)==17
           errors=[]
           for i,row in enumerate(rows):
-              for e in Draft7Validator(schema).iter_errors(row):
-                  errors.append((i,e.message))
+              errors += [(i,e.message) for e in Draft7Validator(schema).iter_errors(row)]
           if errors:
-              print(errors[:20])
-              raise SystemExit(1)
+              print(errors[:10]); raise SystemExit(1)
           print('FINDINGS_SCHEMA_VALID=17/17')
           PY
             [ "$?" -eq 0 ] || READY=false
@@ -91,19 +66,18 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('work/METHOD.md')
-          s=p.read_text()
+          s=p.read_text().rstrip()
           appendix='''\n\n## Revision verification — 2026-08-12\n\nThis revision preserves the report and structured findings and strengthens reproducibility of the method record.\n\nCanonical packet verification:\n- source commit: `eff11b336a6b753122c3ffad99d706eb575ba4b0`\n- outer ZIP bytes: `314638`\n- published SHA-256: `7a8b9fc477698bf86e2cedc98a1cee69503e7a5d575c60ac2ff40d1d8a02166b`\n- observed SHA-256: `7a8b9fc477698bf86e2cedc98a1cee69503e7a5d575c60ac2ff40d1d8a02166b`\n- result: `PASS`; every entry in `PACKET-SHA256SUMS.txt` also returned `OK`.\n\nExact unchanged deliverable hashes paired with this method record:\n- `AUDIT-REPORT.md` SHA-256: `c1d071da78d07e948da25500ea2d7bab58a565decee5ad59cdb294ad2e89b667`\n- `FINDINGS.json` SHA-256: `63c79fadf19817e326cac2032c1b614a973eae91b86a6fd7b88b9207c9a31671`\n- structured findings schema validation: `17 / 17` valid.\n\nNo report conclusion, score, finding, recommendation, or evidence claim was changed in this revision.\n'''
           if '## Revision verification — 2026-08-12' not in s:
-              s=s.rstrip()+appendix+'\n'
-          p.write_text(s)
+              s += appendix
+          p.write_text(s+'\n')
           PY
-
           echo "REVISED_METHOD_SHA=$(sha256sum work/METHOD.md | cut -d' ' -f1)"
           echo "READY=$READY"
           echo "ready=$READY" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Recover isolated Taskmarket worker key
+      - name: Recover Taskmarket signing key
         id: key
         if: steps.preflight.outputs.ready == 'true'
         shell: bash
@@ -113,9 +87,8 @@ jobs:
           set +e
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
             'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9129044406/zip' -o /tmp/signer.zip
-          RC=$?
           rm -rf /tmp/signer && mkdir /tmp/signer
-          [ "$RC" -eq 0 ] && unzip -q /tmp/signer.zip -d /tmp/signer
+          unzip -q /tmp/signer.zip -d /tmp/signer 2>/dev/null
           if [ -s /tmp/signer/wallet-key.txt ]; then
             chmod 600 /tmp/signer/wallet-key.txt
             echo 'ready=true' >> "$GITHUB_OUTPUT"
@@ -124,7 +97,7 @@ jobs:
           fi
           exit 0
 
-      - name: Submit exact three-file revision
+      - name: Submit revision using documented base64 endpoint
         if: steps.preflight.outputs.ready == 'true' && steps.key.outputs.ready == 'true'
         shell: bash
         run: |
@@ -133,69 +106,38 @@ jobs:
           node <<'NODE'
           const fs=require('fs');
           const crypto=require('crypto');
-          const {Wallet,keccak256}=require('ethers');
+          const {Wallet}=require('ethers');
           const API='https://api.taskmarket.dev';
           const taskId='0xe9fb8fe4e6f83b54d4850efd1c5b6aef6d1bbd7f9f91921d4329f404e64c5682';
           const expectedWorker='0x073F1b940fB6bb86Fe8dc0f627cCF3a78471A0de';
-          const receipt={taskId,type:'revision',startedAt:new Date().toISOString(),stages:[],artifacts:[]};
-          const specs=[
-            {path:'work/AUDIT-REPORT.md',fileName:'AUDIT-REPORT.md',mimeType:'text/markdown',role:'final'},
-            {path:'work/FINDINGS.json',fileName:'FINDINGS.json',mimeType:'application/json',role:'attachment'},
-            {path:'work/METHOD.md',fileName:'METHOD.md',mimeType:'text/markdown',role:'attachment'}
-          ];
-          const save=()=>{receipt.completedAt=new Date().toISOString();fs.writeFileSync('alluviance-revision-receipt.json',JSON.stringify(receipt,null,2));};
-          async function post(path,body,key){
-            const headers={'content-type':'application/json','accept':'application/json'};
-            if(key) headers['X-Taskmarket-Idempotency-Key']=key;
-            try{
-              const r=await fetch(API+path,{method:'POST',headers,body:JSON.stringify(body),redirect:'error'});
-              const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,2500)}};
-              return {ok:r.ok,status:r.status,data};
-            }catch(e){return {ok:false,status:0,data:{error:String(e.message||e)}};}
-          }
+          const receipt={taskId,type:'direct-base64-revision',startedAt:new Date().toISOString()};
+          const save=()=>{receipt.completedAt=new Date().toISOString();fs.writeFileSync('alluviance-direct-revision-receipt.json',JSON.stringify(receipt,null,2));};
           (async()=>{
             try{
-              const key=fs.readFileSync('/tmp/signer/wallet-key.txt','utf8').trim();
-              const wallet=new Wallet(key);
+              const wallet=new Wallet(fs.readFileSync('/tmp/signer/wallet-key.txt','utf8').trim());
               receipt.workerAddress=wallet.address;
               if(wallet.address.toLowerCase()!==expectedWorker.toLowerCase()) throw new Error('WORKER_ADDRESS_MISMATCH');
               const signature=await wallet.signMessage(`taskmarket:submit:${taskId}`);
-              const uploaded=[];
-              for(const spec of specs){
-                const bytes=fs.readFileSync(spec.path);
-                const sha256Hash=crypto.createHash('sha256').update(bytes).digest('hex');
-                const keccak256Hash=keccak256(bytes);
-                const plan=await post(`/api/tasks/${taskId}/submissions/request-upload-url`,{
-                  taskId,workerAddress:wallet.address,signature,fileName:spec.fileName,mimeType:spec.mimeType,role:spec.role,sizeBytes:bytes.length
-                },crypto.randomUUID());
-                receipt.stages.push({stage:'request-upload-url',fileName:spec.fileName,status:plan.status,response:plan.data});
-                if(!plan.ok) throw new Error(`UPLOAD_PLAN_${spec.fileName}_HTTP_${plan.status}`);
-                const {uploadUrl,artifactKey}=plan.data||{};
-                if(!uploadUrl||!artifactKey) throw new Error(`UPLOAD_PLAN_${spec.fileName}_MISSING_FIELDS`);
-                const put=await fetch(uploadUrl,{method:'PUT',headers:{'content-type':spec.mimeType,'content-length':String(bytes.length)},body:bytes,redirect:'error'});
-                const putText=await put.text();
-                receipt.stages.push({stage:'upload',fileName:spec.fileName,status:put.status,response:putText.slice(0,200)});
-                if(!put.ok) throw new Error(`UPLOAD_${spec.fileName}_HTTP_${put.status}`);
-                const artifact={artifactKey,fileName:spec.fileName,mimeType:spec.mimeType,role:spec.role,sizeBytes:bytes.length,sha256Hash,keccak256Hash};
-                uploaded.push(artifact);
-                receipt.artifacts.push({...artifact,artifactKey:'[stored-by-taskmarket]'});
-              }
-              const submit=await post(`/api/tasks/${taskId}/submissions/from-keys`,{
-                taskId,workerAddress:wallet.address,artifacts:uploaded,signature
-              },crypto.randomUUID());
-              receipt.stages.push({stage:'submit-revision',status:submit.status,response:submit.data});
-              receipt.status=submit.ok?'submitted':'not_submitted';
-              receipt.submission=submit.data;
-              if(!submit.ok) receipt.error=`SUBMIT_HTTP_${submit.status}`;
-              const mine=await fetch(`${API}/api/submissions/mine?workerAddress=${wallet.address}`,{headers:{accept:'application/json'}});
-              const mineText=await mine.text(); let mineData; try{mineData=JSON.parse(mineText)}catch{mineData={raw:mineText.slice(0,3000)}};
-              receipt.postCheck={status:mine.status,rows:Array.isArray(mineData)?mineData.filter(x=>x.taskId===taskId):mineData};
+              const specs=[
+                ['work/AUDIT-REPORT.md','AUDIT-REPORT.md','text/markdown','final'],
+                ['work/FINDINGS.json','FINDINGS.json','application/json','attachment'],
+                ['work/METHOD.md','METHOD.md','text/markdown','attachment']
+              ];
+              const artifacts=specs.map(([path,fileName,mimeType,role])=>({
+                fileName,mimeType,role,file:fs.readFileSync(path).toString('base64')
+              }));
+              receipt.artifactMeta=specs.map(([path,fileName,mimeType,role])=>{
+                const b=fs.readFileSync(path); return {fileName,mimeType,role,sizeBytes:b.length,sha256:crypto.createHash('sha256').update(b).digest('hex')};
+              });
+              const r=await fetch(`${API}/api/tasks/${taskId}/submissions`,{
+                method:'POST',headers:{'content-type':'application/json','accept':'application/json'},
+                body:JSON.stringify({taskId,workerAddress:wallet.address,artifacts,signature}),redirect:'error'
+              });
+              const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,3000)}};
+              receipt.httpStatus=r.status;receipt.submission=data;receipt.status=r.ok?'submitted':'not_submitted';
+              console.log('DIRECT_REVISION_HTTP='+r.status+' RESPONSE='+JSON.stringify(data));
               save();
-              console.log('ALLUVIANCE_REVISION_RESULT='+JSON.stringify({status:receipt.status,submission:receipt.submission,postCheck:receipt.postCheck}));
-            }catch(e){
-              receipt.status='not_submitted';receipt.error=String(e&&e.message?e.message:e);save();
-              console.log('ALLUVIANCE_REVISION_SAFE_STOP='+receipt.error);
-            }
+            }catch(e){receipt.status='not_submitted';receipt.error=String(e&&e.message?e.message:e);save();console.log('DIRECT_REVISION_SAFE_STOP='+receipt.error);}
           })();
           NODE
           rm -f /tmp/signer/wallet-key.txt
@@ -205,15 +147,15 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ ! -f alluviance-revision-receipt.json ]; then
-            printf '{"status":"not_submitted","reason":"preflight_or_key_recovery_failed","timestamp":"%s"}\n' "$(date -u +%FT%TZ)" > alluviance-revision-receipt.json
+          if [ ! -f alluviance-direct-revision-receipt.json ]; then
+            printf '{"status":"not_submitted","reason":"preflight_or_key_recovery_failed","timestamp":"%s"}\n' "$(date -u +%FT%TZ)" > alluviance-direct-revision-receipt.json
           fi
 
-      - name: Save revision receipt
+      - name: Save direct revision receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: alluviance-revision-receipt
-          path: alluviance-revision-receipt.json
+          name: alluviance-direct-revision-receipt
+          path: alluviance-direct-revision-receipt.json
           retention-days: 2
           if-no-files-found: error
