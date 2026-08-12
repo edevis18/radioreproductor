@@ -1,33 +1,29 @@
-name: Paintbot Opportunity Feasibility
+name: BountyBook Live Scan
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
 jobs:
-  inspect:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Read exact bounty and public onboarding
+      - name: Query live BountyBook API
         shell: bash
         run: |
           set +e
           python3 - <<'PY'
-          import urllib.request
-          urls={
-            'TASK':'https://api.taskmarket.dev/api/tasks/0xf41d2979b5765bda2feedd0fc6ddd8d736bc74a11f549fd31c2e0e2aecb858a6',
-            'PARTICIPATE':'https://softmax.com/api/observatory/v2/participate?league_id=league_b8fa9b35-ac22-48cf-a03f-07b397aff1c7',
-            'LEADERBOARD':'https://softmax.com/api/observatory/v2/divisions/div_aa7825db-262f-4a62-b01a-177c1b48f7ee/leaderboard?include_recent_rounds=0'
-          }
-          for name,url in urls.items():
-              print('\n===== '+name+' =====')
+          import json, urllib.request
+          base='https://api.bountybook.ai'
+          for path in ['/jobs?status=open&limit=50','/jobs?status=claimed&limit=50','/stats']:
+              print('\n===',path,'===')
               try:
-                  req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json,text/plain,*/*'})
-                  with urllib.request.urlopen(req,timeout=20) as r:
+                  req=urllib.request.Request(base+path,headers={'User-Agent':'agent-worker/1.0','Accept':'application/json'})
+                  with urllib.request.urlopen(req,timeout=30) as r:
                       raw=r.read().decode('utf-8','replace')
-                      print('HTTP',r.status,'CONTENT_TYPE',r.headers.get('content-type'))
-                      print(raw[:50000])
+                      print('HTTP',r.status)
+                      print(raw[:60000])
               except Exception as e:
-                  print('ERROR',repr(e))
+                  print('SAFE_ERROR',repr(e))
           PY
           exit 0
