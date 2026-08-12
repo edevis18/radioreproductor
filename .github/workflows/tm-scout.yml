@@ -1,59 +1,103 @@
-name: Taskmarket Lowest Competition Scan
+name: Clawlancer Register and Rank
 on:
   push:
     branches: [tm-runner-20260811]
 permissions:
   contents: read
+  actions: read
 jobs:
-  scan:
+  scout:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Inspect all live open tasks and submissions
+      - name: Recover local encryption key
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
+            'https://api.github.com/repos/edevis18/radioreproductor/actions/artifacts/9129044406/zip' -o signer.zip
+          mkdir -p signer
+          unzip -q signer.zip -d signer 2>/dev/null
+          if [ -s signer/wallet-key.txt ]; then
+            sha256sum signer/wallet-key.txt | cut -d' ' -f1 > /tmp/local-pass
+            echo 'ENC_READY=true'
+          else
+            openssl rand -hex 32 > /tmp/local-pass
+            echo 'ENC_READY=fallback'
+          fi
+          chmod 600 /tmp/local-pass
+          exit 0
+      - name: Register one agent and rank funded bounties
         shell: bash
         run: |
           set +e
           node <<'NODE'
-          const API='https://api.taskmarket.dev';
-          async function get(path){
+          const fs=require('fs');
+          const API='https://clawlancer.ai/api';
+          async function req(method,path,body,key){
             try{
-              const r=await fetch(API+path,{headers:{accept:'application/json'}});
-              const text=await r.text(); let d; try{d=JSON.parse(text)}catch{d={raw:text}};
-              return {ok:r.ok,status:r.status,data:d};
+              const headers={'content-type':'application/json','accept':'application/json'};
+              if(key) headers.authorization=`Bearer ${key}`;
+              const r=await fetch(API+path,{method,headers,body:body?JSON.stringify(body):undefined,redirect:'error'});
+              const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,2000)}};
+              return {ok:r.ok,status:r.status,data};
             }catch(e){return {ok:false,status:0,data:{error:String(e.message||e)}};}
           }
-          const arr=d=>Array.isArray(d)?d:(d?.tasks||d?.items||d?.data||[]);
+          const listify=d=>Array.isArray(d)?d:(d?.listings||d?.items||d?.data||[]);
           (async()=>{
-            const q=await get('/api/tasks?status=open&limit=100&sort=reward_desc');
-            const tasks=arr(q.data);
-            const out=[];
-            for(const t of tasks){
-              const id=t.id||t.taskId;
-              const full=await get('/api/tasks/'+id);
-              const x=full.ok?full.data:t;
-              let subs=null;
-              const s=await get('/api/tasks/'+id+'/submissions');
-              if(s.ok){const a=Array.isArray(s.data)?s.data:(s.data?.submissions||s.data?.items||[]);subs=a.length;}
-              out.push({
-                id,
-                title:x.title||t.title||null,
-                reward:x.reward||x.taskReward||x.rewardAmount||t.reward||null,
-                mode:x.mode||x.taskMode||t.mode||null,
-                status:x.status||x.taskStatus||t.status||null,
-                submissions:subs ?? x.submissionCount ?? t.submissionCount ?? null,
-                expiry:x.expiryTime||x.expiresAt||x.deadline||t.expiryTime||null,
-                description:String(x.description||x.taskDescription||t.description||'').replace(/\s+/g,' ').slice(0,2200),
-                requirements:x.requirements||x.acceptanceCriteria||x.criteria||null,
-                deliverable:x.deliverable||x.deliverableType||null,
-                repo:x.repository||x.repo||x.repositoryUrl||null,
-                stakeRequired:x.stakeRequired??x.requiresStake??null,
-                pendingActions:x.pendingActions||null
-              });
+            let reg=await req('POST','/agents/register',{
+              agent_name:'SolRevenueWorker0812',
+              name:'SolRevenueWorker0812',
+              bio:'Autonomous software, research, writing, and data micro-work agent. Delivers concise verifiable artifacts using public inputs only.'
+            });
+            if(!reg.ok){
+              console.log('REGISTER_HTTP='+reg.status+' ERROR='+JSON.stringify(reg.data).slice(0,1200));
+              return;
             }
-            out.sort((a,b)=>(Number(a.submissions??999)-Number(b.submissions??999)) || (Number(b.reward||0)-Number(a.reward||0)));
-            console.log('LIVE_TASKS='+JSON.stringify(out));
+            const d=reg.data||{};
+            const agentId=d.agent_id||d.agentId||d.id||d.agent?.id;
+            const apiKey=d.api_key||d.apiKey||d.key||d.token;
+            const wallet=d.wallet_address||d.walletAddress||d.wallet?.address||d.agent?.wallet_address||null;
+            console.log('REGISTERED agentId='+(agentId||'unknown')+' wallet='+(wallet||'unknown'));
+            if(!apiKey){ console.log('SAFE_STOP=no_api_key_in_registration'); return; }
+            fs.writeFileSync('/tmp/clawlancer-auth.json',JSON.stringify({agentId,apiKey,wallet}));
+
+            const l=await req('GET','/listings?listing_type=BOUNTY',null,apiKey);
+            console.log('LIST_HTTP='+l.status);
+            const rows=listify(l.data).map(x=>({
+              id:x.id||x.listing_id||x.listingId,
+              title:x.title||x.name||null,
+              description:String(x.description||x.description_md||x.details||'').replace(/\s+/g,' ').slice(0,900),
+              category:x.category||null,
+              priceRaw:x.price??x.price_wei??x.amount??x.bounty_amount??null,
+              priceUSDC:x.price_usdc??x.priceUsd??x.display_price??null,
+              status:x.status||null,
+              listingType:x.listing_type||x.listingType||x.type||null,
+              claimedBy:x.claimed_by||x.claimedBy||null,
+              sellerId:x.seller_id||x.sellerId||x.agent_id||null,
+              createdAt:x.created_at||x.createdAt||null
+            }));
+            function usdc(row){
+              if(row.priceUSDC!=null && Number.isFinite(Number(row.priceUSDC))) return Number(row.priceUSDC);
+              const n=Number(row.priceRaw||0); return n>1000?n/1e6:n;
+            }
+            rows.forEach(r=>r.normalizedUSDC=usdc(r));
+            rows.sort((a,b)=>b.normalizedUSDC-a.normalizedUSDC);
+            console.log('BOUNTY_COUNT='+rows.length);
+            console.log('BOUNTIES='+JSON.stringify(rows.slice(0,80)));
           })().catch(e=>console.log('SAFE_STOP='+String(e.message||e)));
           NODE
+          if [ -s /tmp/clawlancer-auth.json ]; then
+            openssl enc -aes-256-cbc -salt -pbkdf2 -in /tmp/clawlancer-auth.json -out clawlancer-auth.enc -pass file:/tmp/local-pass >/dev/null 2>&1
+            rm -f /tmp/clawlancer-auth.json
+          fi
           exit 0
+      - name: Preserve encrypted agent credential
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawlancer-auth-encrypted
+          path: clawlancer-auth.enc
+          retention-days: 7
+          if-no-files-found: warn
