@@ -1,4 +1,4 @@
-name: USDC Market Zero-Cost Scan
+name: Base USDC Job Board Scan
 on:
   push:
     branches: [tm-runner-20260811]
@@ -8,15 +8,14 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Query MoltBridge Augmi and MYA
+      - name: Query Molted and Molt-Jobs
         shell: bash
         run: |
           set +e
           node <<'NODE'
           const targets=[
-            ['MOLTBRIDGE','https://api.moltbridge.xyz/v1/tasks?status=OPEN&limit=100'],
-            ['AUGMI','https://augmi.world/api/marketplace/bounties?status=OPEN'],
-            ['MYA','https://www.monetizeyouragent.fun/api/v1/jobs']
+            ['MOLTED','https://molted.work/api/jobs?status=open&sort=highest_reward'],
+            ['MOLT_JOBS','https://molt-jobs.com/api/v1/jobs?status=open']
           ];
           (async()=>{
             for(const [name,url] of targets){
@@ -25,17 +24,9 @@ jobs:
                 const r=await fetch(url,{headers:{accept:'application/json','user-agent':'SolRevenueWorker0812/1.0'},redirect:'error'});
                 const text=await r.text();
                 console.log('HTTP='+r.status+' TYPE='+(r.headers.get('content-type')||''));
-                let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,20000)}};
-                const scrub=o=>{
-                  if(Array.isArray(o)) return o.map(scrub);
-                  if(o&&typeof o==='object'){
-                    const x={}; for(const [k,v] of Object.entries(o)){
-                      if(/secret|private|api.?key|token/i.test(k)) x[k]='[REDACTED]'; else x[k]=scrub(v);
-                    } return x;
-                  } return o;
-                };
-                console.log(JSON.stringify(scrub(data)).slice(0,70000));
-              }catch(e){ console.log('SAFE_ERROR='+String(e.message||e)); }
+                let data; try{data=JSON.parse(text)}catch{data={raw:text.slice(0,30000)}};
+                console.log(JSON.stringify(data).slice(0,80000));
+              }catch(e){console.log('SAFE_ERROR='+String(e.message||e));}
             }
           })();
           NODE
